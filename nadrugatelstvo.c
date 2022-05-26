@@ -11,12 +11,6 @@
 
 #define STRSIZE 0x10
 
-struct HandlerCxt 
-{
-    pid_t pidlist[8];
-    pid_t pid;
-    pid_t ppid; 
-};
 
 void proc1();
 void proc2();
@@ -27,22 +21,31 @@ void proc6();
 void proc7();
 void proc8();
 void runChild(void (*cb)());
-pid_t *readPids();
+
+void proc1SigHandler(int signum, siginfo_t *info, void *data);
+void proc2SigHandler(int signum, siginfo_t *info, void *data);
+void proc3SigHandler(int signum, siginfo_t *info, void *data);
+void proc4SigHandler(int signum, siginfo_t *info, void *data);
+void proc5SigHandler(int signum, siginfo_t *info, void *data);
+void proc6SigHandler(int signum, siginfo_t *info, void *data);
+void proc7SigHandler(int signum, siginfo_t *info, void *data);
+void proc8SigHandler(int signum, siginfo_t *info, void *data);
 
 void writePid();
 void readPidlist(pid_t *pidlist);
 
-void proc1SigHandler(int signum);
-void proc2SigHandler(int signum);
-void proc3SigHandler(int signum);
-void proc4SigHandler(int signum);
-void proc5SigHandler(int signum);
-void proc6SigHandler(int signum);
-void proc7SigHandler(int signum);
-void proc8SigHandler(int signum);
+struct HandlerCxt 
+{
+    pid_t pidlist[8];
+    pid_t pid;
+    pid_t ppid; 
+} cxt;
 
+size_t recv_counter;
+size_t send_counter;
 char *name = NULL;
 int fd = -1;
+sigset_t set;
 
 int main(int argc, char **argv)
 {
@@ -51,6 +54,19 @@ int main(int argc, char **argv)
     fd = open("pid_list.txt", O_RDWR | O_CREAT | O_TRUNC, S_IWUSR | S_IRUSR);
     if (fd == -1)
         error(EXIT_FAILURE, errno, "%u:%s: can't open file", getpid(), name);
+
+    sigset_t old;
+    if (sigemptyset(&set) == -1)
+        error(EXIT_FAILURE, errno, "%u:%s: sigemptyset", getpid(), name);
+    if (sigaddset(&set, SIGUSR1) == -1)
+        error(EXIT_FAILURE, errno, "%u:%s: sigaddset", getpid(), name);
+    if (sigaddset(&set, SIGUSR2) == -1)
+        error(EXIT_FAILURE, errno, "%u:%s: sigaddset", getpid(), name);
+
+    if (sigprocmask(SIG_SETMASK, &set, &old) == -1)
+        error(EXIT_FAILURE, errno, "%u:%s: sigprocmask", getpid(), name);
+
+    set = old;
 
     runChild(proc1); 
 
@@ -74,210 +90,332 @@ void proc1()
 {
     writePid(1);
 
-    printf("1 %u %u\n", getpid(), getppid());
-
     runChild(proc2);
     runChild(proc3);
 
+    cxt.pid = getpid();
+    cxt.ppid = getppid();
+
     struct sigaction act = 
     {
-        .sa_handler = proc1SigHandler();
+        .sa_sigaction = proc1SigHandler,
+        .sa_flags = SA_SIGINFO,
     };
     if (sigaction(SIGUSR2, &act, NULL) == -1)
         error(EXIT_FAILURE, errno, "%u:%s: sigaction", getpid(), name);
 
-    pid_t pidlist[8] = {};
-    readPidlist(pidlist);
+    readPidlist(cxt.pidlist);
 
-    if (kill(pidlist[1], SIGUSR2) == -1)
+    printf("1 %u %u\n", getpid(), getppid());
+    fflush(stdout);
+
+    if (kill(cxt.pidlist[1], SIGUSR2) == -1)
         error(EXIT_FAILURE, errno, "%u:%s: kill", getpid(), name);
 
-    wait(NULL);
-    wait(NULL);
+    if (sigprocmask(SIG_SETMASK, &set, NULL) == -1)
+        error(EXIT_FAILURE, errno, "%u:%s: sigprocmask", getpid(), name);
+
+    while(1);
 
     exit(EXIT_SUCCESS);
 }
 
 void proc1SigHandler(int signum, siginfo_t *info, void *data)
 {
-    assert(data);
-    struct HandlerCxt *cxt = (struct HandlerCxt *) data;
+    recv_counter++;
 
-    printf("1 %u %u RECEIVED SIGUSR2\n", cxt->pid, cxt->ppid);
-    printf("1 %u %u SENT SIGUSR2\n", cxt->pid, cxt->ppid);
+    if (recv_counter == 101)
+    {
+        kill(cxt.pidlist[1], SIGTERM);
+        kill(cxt.pidlist[2], SIGTERM);
+        kill(cxt.pidlist[3], SIGTERM);
+        kill(cxt.pidlist[4], SIGTERM);
+        kill(cxt.pidlist[5], SIGTERM);
+        kill(cxt.pidlist[6], SIGTERM);
+        kill(cxt.pidlist[7], SIGTERM);
+
+        wait(NULL);
+        wait(NULL);
+
+        printf("1 %u %u FINISHED WORK AFTER 0 SIGUSR1 AND %lu SIGUSR2 SENT\n", cxt.pid, cxt.ppid, send_counter);
+
+        exit(EXIT_SUCCESS);
+    }
+
+    printf("1 %u %u RECEIVED SIGUSR2 FROM %u\n", cxt.pid, cxt.ppid, info->si_pid);
     fflush(stdout);
 
-    kill(cxt->pidlist[1], SIGUSR2);
+    kill(cxt.pidlist[1], SIGUSR2);
+    printf("1 %u %u SENT SIGUSR2 TO %u\n", cxt.pid, cxt.ppid, cxt.pidlist[1]);
+    fflush(stdout);
+
+    send_counter++;
 }
 
 void proc2()
 {
     writePid(2);
 
-    printf("2 %u %u\n", getpid(), getppid());
+    cxt.pid = getpid();
+    cxt.ppid = getppid();
 
     struct sigaction act = 
     {
-        .sa_handler = proc2SigHandler();
+        .sa_sigaction = proc2SigHandler,
+        .sa_flags = SA_SIGINFO,
     };
     if (sigaction(SIGUSR2, &act, NULL) == -1)
         error(EXIT_FAILURE, errno, "%u:%s: sigaction", getpid(), name);
+    if (sigaction(SIGTERM, &act, NULL) == -1)
+        error(EXIT_FAILURE, errno, "%u:%s: sigaction", getpid(), name);
 
-    pid_t pidlist[8] = {};
-    readPidlist(pidlist);
+    readPidlist(cxt.pidlist);
+
+    printf("2 %u %u\n", getpid(), getppid());
+    fflush(stdout);
+
+    if (sigprocmask(SIG_SETMASK, &set, NULL) == -1)
+        error(EXIT_FAILURE, errno, "%u:%s: sigprocmask", getpid(), name);
+
+    while(1);
 
     exit(EXIT_SUCCESS);
 }
 
 void proc2SigHandler(int signum, siginfo_t *info, void *data)
 {
-    assert(data);
-    struct HandlerCxt *cxt = (struct HandlerCxt *) data;
+    if (signum == SIGTERM)
+    {
+        printf("2 %u %u FINISHED WORK AFTER %lu SIGUSR1 AND 0 SIGUSR2 SENT\n", cxt.pid, cxt.ppid, send_counter);
+        fflush(stdout);
 
-    printf("2 %u %u RECEIVED SIGUSR2\n", cxt->pid, cxt->ppid);
-    printf("2 %u %u SENT SIGUSR1\n", cxt->pid, cxt->ppid);
+        exit(EXIT_SUCCESS);
+    }
+
+    printf("2 %u %u RECEIVED SIGUSR2 FROM %u\n", cxt.pid, cxt.ppid, info->si_pid);
     fflush(stdout);
 
-    kill(cxt->pidlist[2], SIGUSR1);
-    kill(cxt->pidlist[3], SIGUSR1);
-    kill(cxt->pidlist[4], SIGUSR1);
+    kill(cxt.pidlist[2], SIGUSR1);
+    printf("2 %u %u SENT SIGUSR1 TO %u\n", cxt.pid, cxt.ppid, cxt.pidlist[2]);
+    fflush(stdout);
+
+    kill(cxt.pidlist[3], SIGUSR1);
+    printf("2 %u %u SENT SIGUSR1 TO %u\n", cxt.pid, cxt.ppid, cxt.pidlist[3]);
+    fflush(stdout);
+
+    kill(cxt.pidlist[4], SIGUSR1);
+    printf("2 %u %u SENT SIGUSR1 TO %u\n", cxt.pid, cxt.ppid, cxt.pidlist[4]);
+    fflush(stdout);
+
+    send_counter += 3;
 }
 
 void proc3()
 {
     writePid(3);
 
-    printf("3 %u %u\n", getpid(), getppid());
-
     runChild(proc4);
+
+    cxt.pid = getpid();
+    cxt.ppid = getppid();
 
     struct sigaction act = 
     {
-        .sa_handler = proc3SigHandler();
+        .sa_sigaction = proc3SigHandler,
+        .sa_flags = SA_SIGINFO,
     };
     if (sigaction(SIGUSR1, &act, NULL) == -1)
         error(EXIT_FAILURE, errno, "%u:%s: sigaction", getpid(), name);
+    if (sigaction(SIGTERM, &act, NULL) == -1)
+        error(EXIT_FAILURE, errno, "%u:%s: sigaction", getpid(), name);
 
-    pid_t pidlist[8] = {};
-    readPidlist(pidlist);
+    readPidlist(cxt.pidlist);
 
-    if (kill(pidlist[1], SIGUSR2) == -1)
-        error(EXIT_FAILURE, errno, "%u:%s: kill", getpid(), name);
+    printf("3 %u %u\n", getpid(), getppid());
+    fflush(stdout);
 
-    wait(NULL);
+    if (sigprocmask(SIG_SETMASK, &set, NULL) == -1)
+        error(EXIT_FAILURE, errno, "%u:%s: sigprocmask", getpid(), name);
+
+    while(1);
 
     exit(EXIT_SUCCESS);
 }
 
 void proc3SigHandler(int signum, siginfo_t *info, void *data)
 {
-    assert(data);
-    struct HandlerCxt *cxt = (struct HandlerCxt *) data;
+    if (signum == SIGTERM)
+    {
+        wait(NULL);
 
-    printf("3 %u %u RECEIVED SIGUSR1\n", cxt->pid, cxt->ppid);
-    printf("3 %u %u SENT SIGUSR1\n", cxt->pid, cxt->ppid);
+        printf("3 %u %u FINISHED WORK AFTER %lu SIGUSR1 AND 0 SIGUSR2 SENT\n", cxt.pid, cxt.ppid, send_counter);
+        fflush(stdout);
+
+        exit(EXIT_SUCCESS);
+    }
+
+    printf("3 %u %u RECEIVED SIGUSR1 FROM %u\n", cxt.pid, cxt.ppid, info->si_pid);
     fflush(stdout);
 
-    kill(cxt->pidlist[6], SIGUSR1);
+    kill(cxt.pidlist[6], SIGUSR1);
+    printf("3 %u %u SENT SIGUSR1 TO %u\n", cxt.pid, cxt.ppid, cxt.pidlist[6]);
+    fflush(stdout);
+
+    send_counter++;
 }
 
 void proc4()
 {
     writePid(4);
 
-    printf("4 %u %u\n", getpid(), getppid());
-
     runChild(proc5);
     runChild(proc6);
 
+    cxt.pid = getpid();
+    cxt.ppid = getppid();
+
     struct sigaction act = 
     {
-        .sa_handler = proc4SigHandler();
+        .sa_sigaction = proc4SigHandler,
+        .sa_flags = SA_SIGINFO,
     };
     if (sigaction(SIGUSR1, &act, NULL) == -1)
         error(EXIT_FAILURE, errno, "%u:%s: sigaction", getpid(), name);
+    if (sigaction(SIGTERM, &act, NULL) == -1)
+        error(EXIT_FAILURE, errno, "%u:%s: sigaction", getpid(), name);
 
-    pid_t pidlist[8] = {};
-    readPidlist(pidlist);
+    readPidlist(cxt.pidlist);
 
-    wait(NULL); 
-    wait(NULL);
+    printf("4 %u %u\n", getpid(), getppid());
+    fflush(stdout);
+
+    if (sigprocmask(SIG_SETMASK, &set, NULL) == -1)
+        error(EXIT_FAILURE, errno, "%u:%s: sigprocmask", getpid(), name);
+
+    while(1);
 
     exit(EXIT_SUCCESS);
 }
 
 void proc4SigHandler(int signum, siginfo_t *info, void *data)
 {
-    assert(data);
-    struct HandlerCxt *cxt = (struct HandlerCxt *) data;
+    if (signum == SIGTERM)
+    {
+        wait(NULL);
+        wait(NULL);
 
-    printf("4 %u %u RECEIVED SIGUSR1\n", cxt->pid, cxt->ppid);
-    printf("4 %u %u SENT SIGUSR1\n", cxt->pid, cxt->ppid);
+        printf("4 %u %u FINISHED WORK AFTER %lu SIGUSR1 AND 0 SIGUSR2 SENT\n", cxt.pid, cxt.ppid, send_counter);
+        fflush(stdout);
+
+        exit(EXIT_SUCCESS);
+    }
+
+    printf("4 %u %u RECEIVED SIGUSR1 FROM %u\n", cxt.pid, cxt.ppid, info->si_pid);
     fflush(stdout);
 
-    kill(cxt->pidlist[5], SIGUSR1);
+    kill(cxt.pidlist[5], SIGUSR1);
+    printf("4 %u %u SENT SIGUSR1 TO %u\n", cxt.pid, cxt.ppid, cxt.pidlist[5]);
+    fflush(stdout);
+
+    send_counter++;
 }
 
 void proc5()
 {
     writePid(5);
 
-    printf("5 %u %u\n", getpid(), getppid());
+
+    cxt.pid = getpid();
+    cxt.ppid = getppid();
 
     struct sigaction act = 
     {
-        .sa_handler = proc5SigHandler();
+        .sa_sigaction = proc5SigHandler,
+        .sa_flags = SA_SIGINFO,
     };
     if (sigaction(SIGUSR1, &act, NULL) == -1)
         error(EXIT_FAILURE, errno, "%u:%s: sigaction", getpid(), name);
+    if (sigaction(SIGTERM, &act, NULL) == -1)
+        error(EXIT_FAILURE, errno, "%u:%s: sigaction", getpid(), name);
 
-    pid_t pidlist[8] = {};
-    readPidlist(pidlist);
+    readPidlist(cxt.pidlist);
+
+    printf("5 %u %u\n", getpid(), getppid());
+    fflush(stdout);
+
+    if (sigprocmask(SIG_SETMASK, &set, NULL) == -1)
+        error(EXIT_FAILURE, errno, "%u:%s: sigprocmask", getpid(), name);
+
+    while(1);
 
     exit(EXIT_SUCCESS);
 }
 
 void proc5SigHandler(int signum, siginfo_t *info, void *data)
 {
-    assert(data);
-    struct HandlerCxt *cxt = (struct HandlerCxt *) data;
+    if (signum == SIGTERM)
+    {
+        printf("5 %u %u FINISHED WORK AFTER %lu SIGUSR1 AND 0 SIGUSR2 SENT\n", cxt.pid, cxt.ppid, send_counter);
+        fflush(stdout);
 
-    printf("5 %u %u RECEIVED SIGUSR1\n", cxt->pid, cxt->ppid);
-    printf("5 %u %u SENT SIGUSR1\n", cxt->pid, cxt->ppid);
+        exit(EXIT_SUCCESS);
+    }
+
+    printf("5 %u %u RECEIVED SIGUSR1 FROM %u\n", cxt.pid, cxt.ppid, info->si_pid);
     fflush(stdout);
 
-    kill(cxt->pidlist[7], SIGUSR1);
+    kill(cxt.pidlist[7], SIGUSR1);
+    printf("5 %u %u SENT SIGUSR1 TO %u\n", cxt.pid, cxt.ppid, cxt.pidlist[7]);
+    fflush(stdout);
+
+    send_counter++;
 }
 
 void proc6()
 {
     writePid(6);
 
-    printf("6 %u %u\n", getpid(), getppid());
-
     runChild(proc7);
+
+    cxt.pid = getpid();
+    cxt.ppid = getppid();
 
     struct sigaction act = 
     {
-        .sa_handler = proc6SigHandler();
+        .sa_sigaction = proc6SigHandler,
+        .sa_flags = SA_SIGINFO,
     };
     if (sigaction(SIGUSR1, &act, NULL) == -1)
         error(EXIT_FAILURE, errno, "%u:%s: sigaction", getpid(), name);
+    if (sigaction(SIGTERM, &act, NULL) == -1)
+        error(EXIT_FAILURE, errno, "%u:%s: sigaction", getpid(), name);
 
-    pid_t pidlist[8] = {};
-    readPidlist(pidlist);
+    readPidlist(cxt.pidlist);
 
-    wait(NULL);
+    printf("6 %u %u\n", getpid(), getppid());
+    fflush(stdout);
+
+    if (sigprocmask(SIG_SETMASK, &set, NULL) == -1)
+        error(EXIT_FAILURE, errno, "%u:%s: sigprocmask", getpid(), name);
+
+    while(1);
 
     exit(EXIT_SUCCESS);
 }
 
 void proc6SigHandler(int signum, siginfo_t *info, void *data)
 {
-    assert(data);
-    struct HandlerCxt *cxt = (struct HandlerCxt *) data;
+    if (signum == SIGTERM)
+    {
+        wait(NULL);
 
-    printf("6 %u %u RECEIVED SIGUSR1\n", cxt->pid, cxt->ppid);
+        printf("6 %u %u FINISHED WORK AFTER 0 SIGUSR1 AND 0 SIGUSR2 SENT\n", cxt.pid, cxt.ppid);
+        fflush(stdout);
+
+        exit(EXIT_SUCCESS);
+    }
+
+    printf("6 %u %u RECEIVED SIGUSR1 FROM %u\n", cxt.pid, cxt.ppid, info->si_pid);
     fflush(stdout);
 }
 
@@ -285,31 +423,47 @@ void proc7()
 {
     writePid(7);
 
-    printf("7 %u %u\n", getpid(), getppid());
-
     runChild(proc8);
+
+    cxt.pid = getpid();
+    cxt.ppid = getppid();
 
     struct sigaction act = 
     {
-        .sa_handler = proc7SigHandler();
+        .sa_sigaction = proc7SigHandler,
+        .sa_flags = SA_SIGINFO,
     };
     if (sigaction(SIGUSR1, &act, NULL) == -1)
         error(EXIT_FAILURE, errno, "%u:%s: sigaction", getpid(), name);
+    if (sigaction(SIGTERM, &act, NULL) == -1)
+        error(EXIT_FAILURE, errno, "%u:%s: sigaction", getpid(), name);
 
-    pid_t pidlist[8] = {};
-    readPidlist(pidlist);
+    readPidlist(cxt.pidlist);
 
-    wait(NULL);
+    printf("7 %u %u\n", getpid(), getppid());
+    fflush(stdout);
+
+    if (sigprocmask(SIG_SETMASK, &set, NULL) == -1)
+        error(EXIT_FAILURE, errno, "%u:%s: sigprocmask", getpid(), name);
+
+    while(1);
 
     exit(EXIT_SUCCESS);
 }
 
 void proc7SigHandler(int signum, siginfo_t *info, void *data)
 {
-    assert(data);
-    struct HandlerCxt *cxt = (struct HandlerCxt *) data;
+    if (signum == SIGTERM)
+    {
+        wait(NULL);
 
-    printf("7 %u %u RECEIVED SIGUSR1\n", cxt->pid, cxt->ppid);
+        printf("7 %u %u FINISHED WORK AFTER 0 SIGUSR1 AND 0 SIGUSR2 SENT\n", cxt.pid, cxt.ppid);
+        fflush(stdout);
+
+        exit(EXIT_SUCCESS);
+    }
+
+    printf("7 %u %u RECEIVED SIGUSR1 FROM %u\n", cxt.pid, cxt.ppid, info->si_pid);
     fflush(stdout);
 }
 
@@ -317,31 +471,50 @@ void proc8()
 {
     writePid(8);
 
-    printf("8 %u %u\n", getpid(), getppid());
+    cxt.pid = getpid();
+    cxt.ppid = getppid();
 
     struct sigaction act = 
     {
-        .sa_handler = proc8SigHandler();
+        .sa_sigaction = proc8SigHandler,
+        .sa_flags = SA_SIGINFO,
     };
     if (sigaction(SIGUSR1, &act, NULL) == -1)
         error(EXIT_FAILURE, errno, "%u:%s: sigaction", getpid(), name);
+    if (sigaction(SIGTERM, &act, NULL) == -1)
+        error(EXIT_FAILURE, errno, "%u:%s: sigaction", getpid(), name);
 
-    pid_t pidlist[8] = {};
-    readPidlist(pidlist);
+    readPidlist(cxt.pidlist);
+
+    printf("8 %u %u\n", getpid(), getppid());
+    fflush(stdout);
+
+    if (sigprocmask(SIG_SETMASK, &set, NULL) == -1)
+        error(EXIT_FAILURE, errno, "%u:%s: sigprocmask", getpid(), name);
+
+    while(1);
 
     exit(EXIT_SUCCESS); 
 }
 
 void proc8SigHandler(int signum, siginfo_t *info, void *data)
 {
-    assert(data);
-    struct HandlerCxt *cxt = (struct HandlerCxt *) data;
+    if (signum == SIGTERM)
+    {
+        printf("8 %u %u FINISHED WORK AFTER 0 SIGUSR1 AND %lu SIGUSR2 SENT\n", cxt.pid, cxt.ppid, send_counter);
+        fflush(stdout);
 
-    printf("8 %u %u RECEIVED SIGUSR1\n", cxt->pid, cxt->ppid);
-    printf("8 %u %u SENT SIGUSR2\n", cxt->pid, cxt->ppid);
+        exit(EXIT_SUCCESS);
+    }
+
+    printf("8 %u %u RECEIVED SIGUSR1 FROM %u\n", cxt.pid, cxt.ppid, info->si_pid);
     fflush(stdout);
 
-    kill(cxt->pidlist[0], SIGUSR2);
+    kill(cxt.pidlist[0], SIGUSR2);
+    printf("8 %u %u SENT SIGUSR2 TO %u\n", cxt.pid, cxt.ppid, cxt.pidlist[0]);
+    fflush(stdout);
+
+    send_counter++;
 }
 
 void writePid(unsigned number)
@@ -389,6 +562,8 @@ void readPidlist(pid_t *pidlist)
 
             if (pidlist[number-1] == pid)
                 continue;
+            
+            printf("[%u]: %u:%u\n", getpid(), pid, number);
 
             pidlist[number-1] = pid;
             i++;
