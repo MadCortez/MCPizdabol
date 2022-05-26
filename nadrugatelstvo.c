@@ -248,7 +248,8 @@ void proc3SigHandler(int signum, siginfo_t *info, void *data)
     {
         wait(NULL);
 
-        printf("3 %u %u FINISHED WORK AFTER %lu SIGUSR1 AND 0 SIGUSR2 SENT\n", cxt.pid, cxt.ppid, send_counter);
+        printf("3 %u %u FINISHED WORK AFTER %lu SIGUSR1 AND 0 SIGUSR2 SENT (!@$ LOSS COULD OCCUR $@!)\n", 
+               cxt.pid, cxt.ppid, send_counter);
         fflush(stdout);
 
         exit(EXIT_SUCCESS);
@@ -304,7 +305,8 @@ void proc4SigHandler(int signum, siginfo_t *info, void *data)
         wait(NULL);
         wait(NULL);
 
-        printf("4 %u %u FINISHED WORK AFTER %lu SIGUSR1 AND 0 SIGUSR2 SENT\n", cxt.pid, cxt.ppid, send_counter);
+        printf("4 %u %u FINISHED WORK AFTER %lu SIGUSR1 AND 0 SIGUSR2 SENT (!@$ LOSS COULD OCCUR $@!)\n", 
+               cxt.pid, cxt.ppid, send_counter);
         fflush(stdout);
 
         exit(EXIT_SUCCESS);
@@ -563,8 +565,6 @@ void readPidlist(pid_t *pidlist)
             if (pidlist[number-1] == pid)
                 continue;
             
-            printf("[%u]: %u:%u\n", getpid(), pid, number);
-
             pidlist[number-1] = pid;
             i++;
         }
